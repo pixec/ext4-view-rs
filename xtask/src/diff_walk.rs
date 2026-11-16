@@ -43,6 +43,14 @@ pub struct WalkDirEntry {
     pub mode: u16,
     pub uid: u32,
     pub gid: u32,
+    pub ino: u64,
+    pub nlink: u64,
+    /// Extended attributes as (name, value) pairs, sorted by name.
+    ///
+    /// Attributes in the `system.` namespace are excluded, because the
+    /// kernel converts some of them (such as POSIX ACLs) to a different
+    /// format than the one stored on disk.
+    pub xattrs: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 impl WalkDirEntry {
@@ -54,6 +62,17 @@ impl WalkDirEntry {
         output.push(b' ');
         output.extend(format!("{}:{}", self.uid, self.gid).as_bytes());
         output.push(b' ');
+        output.extend(
+            format!("ino={} nlink={}", self.ino, self.nlink).as_bytes(),
+        );
+        output.push(b' ');
+        for (name, value) in &self.xattrs {
+            output.extend(b"xattr=");
+            output.extend(name);
+            output.push(b':');
+            output.extend(HexDisplay(value).to_string().as_bytes());
+            output.push(b' ');
+        }
 
         match &self.content {
             FileContent::Dir => output.extend(b"dir"),
@@ -69,6 +88,22 @@ impl WalkDirEntry {
         }
         output
     }
+}
+
+/// Get the extended attributes of `path`, in the form described in
+/// [`WalkDirEntry::xattrs`].
+fn lib_xattrs(
+    fs: &Ext4,
+    path: ext4_view::Path<'_>,
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let mut xattrs: Vec<_> = fs
+        .symlink_xattrs(path)?
+        .into_iter()
+        .filter(|xattr| !xattr.name().starts_with(b"system."))
+        .map(|xattr| (xattr.name().to_vec(), xattr.value().to_vec()))
+        .collect();
+    xattrs.sort_unstable();
+    Ok(xattrs)
 }
 
 fn new_dir_entry(
@@ -94,6 +129,9 @@ fn new_dir_entry(
         mode: metadata.mode(),
         uid: metadata.uid(),
         gid: metadata.gid(),
+        ino: metadata.ino().into(),
+        nlink: metadata.nlink().into(),
+        xattrs: lib_xattrs(fs, path.as_path())?,
     })
 }
 
@@ -110,6 +148,9 @@ fn walk_with_lib(
         mode: metadata.mode(),
         uid: metadata.uid(),
         gid: metadata.gid(),
+        ino: metadata.ino().into(),
+        nlink: metadata.nlink().into(),
+        xattrs: lib_xattrs(fs, path)?,
     });
 
     let entry_iter = match fs.read_dir(path) {

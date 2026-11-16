@@ -17,12 +17,15 @@
 //!
 //! Outputs one line for each file in the filesystem (including
 //! directories and symlinks). Each line contains the file's path, mode,
-//! and a summary of the file's contents (e.g. symlink target or a
-//! SHA-256 hash of a regular file's contents). Example:
+//! owner, inode number, link count, extended attributes (excluding the
+//! `system.` namespace), and a summary of the file's contents (e.g.
+//! symlink target or a SHA-256 hash of a regular file's contents).
+//! Example:
 //!
 //! ```
-//! /big_dir 755 dir
-//! /big_dir/0 644 file sha256=5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9
+//! /big_dir 755 1000:1000 ino=1013 nlink=2 dir
+//! /big_dir/0 644 1000:1000 ino=1014 nlink=1 file sha256=5FECEB66FFC86F38D952786C6D696C79C2DBC239DD4E91B46729D73A27FB57E9
+//! /inode_xattr 644 1000:1000 ino=13 nlink=1 xattr=user.a:68656C6C6F file sha256=E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855
 //! ```
 
 use anyhow::{Context, Result, bail};
@@ -74,6 +77,47 @@ fn is_encrypted_dir(path: &Path) -> Result<bool> {
     Ok(is_encrypted)
 }
 
+/// Get the extended attributes of `path`, in the form described in
+/// [`WalkDirEntry::xattrs`].
+fn get_xattrs(path: &Path) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let path = CString::new(path.as_os_str().as_bytes())?;
+
+    // Get the null-separated list of names. Don't follow symlinks.
+    let mut names = vec![0u8; 64 * 1024];
+    let len = unsafe {
+        libc::llistxattr(path.as_ptr(), names.as_mut_ptr().cast(), names.len())
+    };
+    let Ok(len) = usize::try_from(len) else {
+        bail!("llistxattr failed: {}", io::Error::last_os_error());
+    };
+    names.truncate(len);
+
+    let mut xattrs = Vec::new();
+    for name in names.split(|b| *b == 0).filter(|name| !name.is_empty()) {
+        if name.starts_with(b"system.") {
+            continue;
+        }
+
+        let c_name = CString::new(name)?;
+        let mut value = vec![0u8; 64 * 1024];
+        let len = unsafe {
+            libc::lgetxattr(
+                path.as_ptr(),
+                c_name.as_ptr(),
+                value.as_mut_ptr().cast(),
+                value.len(),
+            )
+        };
+        let Ok(len) = usize::try_from(len) else {
+            bail!("lgetxattr failed: {}", io::Error::last_os_error());
+        };
+        value.truncate(len);
+        xattrs.push((name.to_vec(), value));
+    }
+    xattrs.sort_unstable();
+    Ok(xattrs)
+}
+
 fn new_dir_entry(dir_entry: fs::DirEntry) -> Result<WalkDirEntry> {
     let metadata = dir_entry.metadata()?;
     let path = dir_entry.path();
@@ -87,12 +131,16 @@ fn new_dir_entry(dir_entry: fs::DirEntry) -> Result<WalkDirEntry> {
     } else {
         FileContent::Regular(calc_file_sha256(&path)?)
     };
+    let xattrs = get_xattrs(&path)?;
     Ok(WalkDirEntry {
         path,
         content,
         mode: mode_from_metadata(&metadata),
         uid: metadata.uid(),
         gid: metadata.gid(),
+        ino: metadata.ino(),
+        nlink: metadata.nlink(),
+        xattrs,
     })
 }
 
@@ -116,6 +164,9 @@ fn walk_mounted(path: &Path) -> Result<Vec<WalkDirEntry>> {
         mode: mode_from_metadata(&metadata),
         uid: metadata.uid(),
         gid: metadata.gid(),
+        ino: metadata.ino(),
+        nlink: metadata.nlink(),
+        xattrs: get_xattrs(path)?,
     });
 
     if is_encrypted_dir(path)? {

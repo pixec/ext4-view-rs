@@ -59,6 +59,7 @@ jobs:
       - run: cargo test -p ext4-view
       # Test diff-walk.
       - run: cargo xtask diff-walk test_data/test_disk1.bin.zst
+      - run: cargo xtask diff-walk test_data/test_disk_xattrs.bin.zst
       # Test with std enabled and ignored tests included. Upload
       # coverage results to codecov.io.
       - uses: taiki-e/install-action@cargo-llvm-cov
