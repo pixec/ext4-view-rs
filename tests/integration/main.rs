@@ -13,6 +13,7 @@ mod file;
 mod label;
 mod path;
 mod uuid;
+mod xattr;
 
 use ext4_view::Ext4;
 

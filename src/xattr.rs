@@ -414,6 +414,61 @@ mod tests {
         );
     }
 
+    /// Load the xattrs test disk, modify the attribute block of
+    /// `/block_xattr` with `modify`, then read the file's attributes.
+    #[cfg(feature = "std")]
+    fn read_modified_block(
+        modify: impl FnOnce(&mut [u8]),
+    ) -> Result<Vec<Xattr>, Ext4Error> {
+        use crate::path::Path;
+        use crate::resolve::FollowSymlinks;
+        use alloc::boxed::Box;
+
+        let mut data =
+            crate::test_util::load_compressed_data("test_disk_xattrs.bin.zst");
+        let fs = Ext4::load(Box::new(data.clone())).unwrap();
+        let inode = fs
+            .path_to_inode(Path::new("/block_xattr"), FollowSymlinks::All)
+            .unwrap();
+        let block_size = fs.0.superblock.block_size.to_usize();
+        let start = usize::try_from(inode.xattr_block).unwrap() * block_size;
+        modify(&mut data[start..start + block_size]);
+
+        let fs = Ext4::load(Box::new(data)).unwrap();
+        fs.xattrs("/block_xattr")
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_block_errors() {
+        let inode = InodeIndex::new(14).unwrap();
+
+        // Unmodified.
+        assert_eq!(read_modified_block(|_| {}).unwrap().len(), 2);
+
+        // Invalid magic.
+        assert_eq!(
+            read_modified_block(|block| block[3] = 0).unwrap_err(),
+            CorruptKind::XattrBlockHeader(inode)
+        );
+
+        // Invalid block count.
+        assert_eq!(
+            read_modified_block(|block| block[8] = 2).unwrap_err(),
+            CorruptKind::XattrBlockHeader(inode)
+        );
+
+        // Invalid checksum.
+        assert_eq!(
+            read_modified_block(|block| {
+                let last = block.len() - 1;
+                block[last] ^= 0xff;
+            })
+            .unwrap_err(),
+            CorruptKind::XattrBlockChecksum(inode)
+        );
+    }
+
     #[test]
     fn test_xattr_debug() {
         assert_eq!(
