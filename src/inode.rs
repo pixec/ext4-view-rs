@@ -18,6 +18,7 @@ use crate::util::{
     read_u16le, read_u32le, u32_from_hilo, u64_from_hilo, usize_from_u32,
 };
 use alloc::vec;
+use alloc::vec::Vec;
 use bitflags::bitflags;
 use core::num::NonZeroU32;
 
@@ -113,6 +114,10 @@ pub(crate) struct Inode {
 
     /// Number of blocks in the file (including holes).
     file_size_in_blocks: u32,
+
+    /// Block containing extended attributes, or zero if there is no
+    /// such block.
+    pub(crate) xattr_block: FsBlockIndex,
 }
 
 impl Inode {
@@ -167,7 +172,9 @@ impl Inode {
         // OK to unwrap: already checked the length.
         let i_block = data.get(0x28..0x28 + Self::INLINE_DATA_LEN).unwrap();
         let i_generation = read_u32le(data, 0x64);
+        let i_file_acl_lo = read_u32le(data, 0x68);
         let i_size_high = read_u32le(data, 0x6c);
+        let l_i_file_acl_high = read_u16le(data, 0x74 + 0x2);
         let l_i_uid_high = read_u16le(data, 0x74 + 0x4);
         let l_i_gid_high = read_u16le(data, 0x74 + 0x6);
         let (l_i_checksum_lo, i_checksum_hi) = if ext4.has_metadata_checksums()
@@ -252,9 +259,28 @@ impl Inode {
                 flags: InodeFlags::from_bits_retain(i_flags),
                 checksum_base,
                 file_size_in_blocks,
+                xattr_block: u64_from_hilo(
+                    u32::from(l_i_file_acl_high),
+                    i_file_acl_lo,
+                ),
             },
             checksum,
         ))
+    }
+
+    /// Read the raw on-disk bytes of an inode.
+    ///
+    /// The data is not validated.
+    pub(crate) fn read_bytes(
+        ext4: &Ext4,
+        inode: InodeIndex,
+    ) -> Result<Vec<u8>, Ext4Error> {
+        let (block_index, offset_within_block) =
+            get_inode_location(ext4, inode)?;
+
+        let mut data = vec![0; usize::from(ext4.0.superblock.inode_size)];
+        ext4.read_from_block(block_index, offset_within_block, &mut data)?;
+        Ok(data)
     }
 
     /// Read an inode.
@@ -262,11 +288,7 @@ impl Inode {
         ext4: &Ext4,
         inode: InodeIndex,
     ) -> Result<Self, Ext4Error> {
-        let (block_index, offset_within_block) =
-            get_inode_location(ext4, inode)?;
-
-        let mut data = vec![0; usize::from(ext4.0.superblock.inode_size)];
-        ext4.read_from_block(block_index, offset_within_block, &mut data)?;
+        let data = Self::read_bytes(ext4, inode)?;
 
         let (inode, expected_checksum) = Self::from_bytes(ext4, inode, &data)?;
 

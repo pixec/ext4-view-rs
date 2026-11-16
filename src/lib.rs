@@ -135,6 +135,7 @@ mod superblock;
 mod timestamp;
 mod util;
 mod uuid;
+mod xattr;
 
 #[cfg(all(test, feature = "std"))]
 mod test_util;
@@ -170,6 +171,7 @@ pub use path::{Component, Components, Path, PathBuf, PathError};
 pub use reader::{Ext4Read, MemIoError};
 pub use timestamp::Timestamp;
 pub use uuid::Uuid;
+pub use xattr::Xattr;
 
 struct Ext4Inner {
     superblock: Superblock,
@@ -625,6 +627,74 @@ impl Ext4 {
             let inode =
                 fs.path_to_inode(path, FollowSymlinks::ExcludeFinalComponent)?;
             Ok(inode.metadata)
+        }
+
+        inner(self, path.try_into().map_err(|_| Ext4Error::MalformedPath)?)
+    }
+}
+
+/// Extended attributes.
+///
+/// See [xattr(7)][xattr] for an overview of extended attributes.
+///
+/// [xattr]: https://www.man7.org/linux/man-pages/man7/xattr.7.html
+impl Ext4 {
+    /// Get the extended attributes of `path`.
+    ///
+    /// All attributes stored for the file are returned, including
+    /// those in the `trusted.` and `security.` namespaces. Attributes
+    /// with an unrecognized name index are skipped. The order of the
+    /// returned attributes is unspecified.
+    ///
+    /// # Errors
+    ///
+    /// An error will be returned if:
+    /// * `path` is not absolute.
+    /// * `path` does not exist.
+    ///
+    /// This is not an exhaustive list of errors, see the
+    /// [crate documentation](crate#errors).
+    pub fn xattrs<'p, P>(&self, path: P) -> Result<Vec<Xattr>, Ext4Error>
+    where
+        P: TryInto<Path<'p>>,
+    {
+        fn inner(fs: &Ext4, path: Path<'_>) -> Result<Vec<Xattr>, Ext4Error> {
+            let inode = fs.path_to_inode(path, FollowSymlinks::All)?;
+            xattr::read_xattrs(fs, &inode)
+        }
+
+        inner(self, path.try_into().map_err(|_| Ext4Error::MalformedPath)?)
+    }
+
+    /// Get the extended attributes of `path`.
+    ///
+    /// If the final component of `path` is a symlink, the attributes of
+    /// the symlink itself will be returned, not those of the symlink's
+    /// target. Any other symlink components of `path` are resolved as
+    /// normal.
+    ///
+    /// See [`Ext4::xattrs`] for details of which attributes are
+    /// returned.
+    ///
+    /// # Errors
+    ///
+    /// An error will be returned if:
+    /// * `path` is not absolute.
+    /// * `path` does not exist.
+    ///
+    /// This is not an exhaustive list of errors, see the
+    /// [crate documentation](crate#errors).
+    pub fn symlink_xattrs<'p, P>(
+        &self,
+        path: P,
+    ) -> Result<Vec<Xattr>, Ext4Error>
+    where
+        P: TryInto<Path<'p>>,
+    {
+        fn inner(fs: &Ext4, path: Path<'_>) -> Result<Vec<Xattr>, Ext4Error> {
+            let inode =
+                fs.path_to_inode(path, FollowSymlinks::ExcludeFinalComponent)?;
+            xattr::read_xattrs(fs, &inode)
         }
 
         inner(self, path.try_into().map_err(|_| Ext4Error::MalformedPath)?)

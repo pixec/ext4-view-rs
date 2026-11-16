@@ -365,6 +365,18 @@ pub(crate) enum CorruptKind {
     /// A directory entry is invalid.
     DirEntry(InodeIndex),
 
+    /// An inode's `i_extra_isize` field is invalid.
+    InodeExtraSize(InodeIndex),
+
+    /// An extended attribute entry is invalid.
+    XattrEntry(InodeIndex),
+
+    /// An inode's extended attribute block has an invalid header.
+    XattrBlockHeader(InodeIndex),
+
+    /// An inode's extended attribute block has an invalid checksum.
+    XattrBlockChecksum(InodeIndex),
+
     /// Invalid read of a block.
     BlockRead {
         /// Absolute block index.
@@ -580,6 +592,20 @@ impl Display for CorruptKind {
             Self::DirEntry(inode) => {
                 write!(f, "invalid directory entry in inode {inode}")
             }
+            Self::InodeExtraSize(inode) => {
+                write!(f, "inode {inode} has an invalid extra size")
+            }
+            Self::XattrEntry(inode) => {
+                write!(f, "invalid extended attribute entry in inode {inode}")
+            }
+            Self::XattrBlockHeader(inode) => write!(
+                f,
+                "invalid extended attribute block header for inode {inode}"
+            ),
+            Self::XattrBlockChecksum(inode) => write!(
+                f,
+                "invalid extended attribute block checksum for inode {inode}"
+            ),
             Self::BlockRead {
                 block_index,
                 original_block_index,
