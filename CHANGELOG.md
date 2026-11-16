@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+* Added `Metadata::ino` and `Metadata::nlink` to get a file's inode
+  number and hard link count.
+* Added `Ext4::xattrs` and `Ext4::symlink_xattrs` to read a file's
+  extended attributes, returned as the new `Xattr` type.
+
 ## 1.0.0
 
 * MSRV increased to `1.85`.
