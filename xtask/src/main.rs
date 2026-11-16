@@ -285,6 +285,81 @@ impl DiskParams {
         Ok(())
     }
 
+    /// Write files with extended attributes and hard links.
+    fn fill_xattrs(&self) -> Result<()> {
+        let mount = Mount::new(&self.path, ReadOnly(false))?;
+        let root = mount.path();
+
+        let setfattr = |path: &Path, name: &str, value: &str| {
+            run_cmd(
+                sudo()
+                    .args(["setfattr", "--no-dereference", "-n", name])
+                    .args(["-v", value])
+                    .arg(path),
+            )
+        };
+
+        // A file with no extended attributes.
+        fs::write(root.join("no_xattrs"), [])?;
+
+        // A small attribute, stored in the inode.
+        let path = root.join("inode_xattr");
+        fs::write(&path, [])?;
+        setfattr(&path, "user.a", "hello")?;
+
+        // An attribute too large to fit in the inode, stored in a
+        // separate block, along with a small one that fits in the
+        // inode.
+        let path = root.join("block_xattr");
+        fs::write(&path, [])?;
+        setfattr(&path, "user.small", "1")?;
+        setfattr(&path, "user.big", &"x".repeat(600))?;
+
+        // Attributes in the trusted and security namespaces. The
+        // security.capability value grants CAP_NET_RAW in the effective
+        // and permitted sets.
+        let path = root.join("privileged_xattrs");
+        fs::write(&path, [])?;
+        setfattr(&path, "trusted.t", "trusted value")?;
+        setfattr(
+            &path,
+            "security.capability",
+            "0x0100000200200000000000000000000000000000",
+        )?;
+
+        // A file with an access ACL and a directory with a default ACL.
+        let path = root.join("acl_file");
+        fs::write(&path, [])?;
+        run_cmd(
+            Command::new("setfacl")
+                .args(["-m", "u:1000:r,g:2000:rw"])
+                .arg(path),
+        )?;
+        let path = root.join("acl_dir");
+        fs::create_dir(&path)?;
+        run_cmd(
+            Command::new("setfacl")
+                .args(["-d", "-m", "u:1000:rx"])
+                .arg(path),
+        )?;
+
+        // A symlink with its own attribute, pointing to a file with a
+        // different attribute.
+        let path = root.join("symlink");
+        symlink("inode_xattr", &path)?;
+        setfattr(&path, "trusted.link", "on the link")?;
+
+        // A file with two hard links in different directories.
+        let dir = root.join("dir");
+        fs::create_dir(&dir)?;
+        fs::write(root.join("hard_link_a"), "linked")?;
+        fs::hard_link(root.join("hard_link_a"), dir.join("hard_link_b"))?;
+
+        mount.unmount()?;
+
+        Ok(())
+    }
+
     fn fill_ext3(&self) -> Result<()> {
         let mount = Mount::new(&self.path, ReadOnly(false))?;
         let root = mount.path();
@@ -595,6 +670,20 @@ fn create_test_data() -> Result<()> {
     disk.create()?;
     disk.fill_ext3()?;
     disk.check_dir_htree_depth("/medium_dir", 0)?;
+    zstd_compress(&disk.path)?;
+
+    // Ext4 filesystem with extended attributes, ACLs, and hard links.
+    let path = dir.join("test_disk_xattrs.bin");
+    let disk = DiskParams {
+        path: path.to_owned(),
+        size_in_kilobytes: 1024 * 4,
+        fs_type: FsType::Ext4,
+        block_size: 1024,
+        hash_alg: None,
+        inode_size: Some(256),
+    };
+    disk.create()?;
+    disk.fill_xattrs()?;
     zstd_compress(&disk.path)?;
 
     Ok(())
