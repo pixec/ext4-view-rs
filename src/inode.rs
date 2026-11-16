@@ -162,6 +162,7 @@ impl Inode {
         let i_ctime = read_u32le(data, 0xc);
         let i_mtime = read_u32le(data, 0x10);
         let i_gid = read_u16le(data, 0x18);
+        let i_links_count = read_u16le(data, 0x1a);
         let i_flags = read_u32le(data, 0x20);
         // OK to unwrap: already checked the length.
         let i_block = data.get(0x28..0x28 + Self::INLINE_DATA_LEN).unwrap();
@@ -245,6 +246,8 @@ impl Inode {
                     ctime,
                     mtime,
                     crtime,
+                    ino: index.get(),
+                    nlink: i_links_count,
                 },
                 flags: InodeFlags::from_bits_retain(i_flags),
                 checksum_base,

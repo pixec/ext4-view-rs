@@ -40,6 +40,12 @@ pub struct Metadata {
     /// Creation time.
     /// Only present if inode is large enough.
     pub(crate) crtime: Option<Timestamp>,
+
+    /// Inode number.
+    pub(crate) ino: u32,
+
+    /// Number of hard links.
+    pub(crate) nlink: u16,
 }
 
 impl Metadata {
@@ -122,5 +128,34 @@ impl Metadata {
     #[must_use]
     pub fn created(&self) -> Option<Timestamp> {
         self.crtime
+    }
+
+    /// Get the inode number.
+    ///
+    /// Each file in the filesystem has a unique inode number. Paths
+    /// that are hard links to the same file have the same inode
+    /// number.
+    ///
+    /// See `st_ino` in [inode(7)][inode] for more details.
+    ///
+    /// [inode]: https://www.man7.org/linux/man-pages/man7/inode.7.html
+    #[must_use]
+    pub fn ino(&self) -> u32 {
+        self.ino
+    }
+
+    /// Get the number of hard links to the file.
+    ///
+    /// For a directory, this counts the directory's entry in its
+    /// parent, its own `.` entry, and the `..` entry of each
+    /// subdirectory. If a directory has too many subdirectories for the
+    /// count to fit, the stored count is 1.
+    ///
+    /// See `st_nlink` in [inode(7)][inode] for more details.
+    ///
+    /// [inode]: https://www.man7.org/linux/man-pages/man7/inode.7.html
+    #[must_use]
+    pub fn nlink(&self) -> u16 {
+        self.nlink
     }
 }
